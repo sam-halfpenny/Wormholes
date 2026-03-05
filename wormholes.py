@@ -8,10 +8,32 @@ from pathlib import Path
 FOV=10
 #Wormhole centered at origin with throat radius 1
 #REMEMBER TO SET LIGHT'S INIT.VEL. TO 1
-LD=100000
+
+
+
+
+## ENTER DIRECTORY DATA HERE
+#Enter file location for the equirectangular image for universe 1:
+univ1dir="C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/universes/univ3.jpg"
+#Enter file location for the equirectangular image for universe 2:
+univ2dir="C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/universes/univ2.jpg"
+#enter directory for the lookup folder here
+lookuplocation="C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/lookups"
+#enter the directory to which the render will be stored:
+renderdestination="C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/render"
+
+
+
+
+
+
+
+
+univ1=imageio.v2.imread(univ1dir)
+univ2=imageio.v2.imread(univ2dir)
+LD={'angle':10000,'rad':1000}
+
 ds=0.01
-univ1=imageio.v2.imread('C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/universes/univ1.webp')
-univ2=imageio.v2.imread('C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/universes/univ2.jpg')
 def segScreen(offset):
     workers=offset['workers']
     nim=[]
@@ -19,7 +41,7 @@ def segScreen(offset):
         nim.append([])
         print(str(i))
         for j in range(2*IMSIZE//2):
-            raydata=wormholes[0].traceRayFromLookup({'x':-10,'y':0,'z':0},unit_vector({'x':10,'y':-(i/2+offset['x'])*FOV/IMSIZE,'z':(j/2+offset['y'])*FOV/IMSIZE}),1)
+            raydata=wormholes[0].traceRayFromLookup({'x':-10,'y':0,'z':0},unit_vector({'x':10,'y':-(i/2+offset['x'])*FOV/IMSIZE,'z':(j/2+offset['y'])*FOV/IMSIZE}),1,False)
             if raydata['univ']==0:
                 nim[i].append([0,0,0,255])
             else:
@@ -76,14 +98,18 @@ def findpixel(vel,univ):
         pixel.append(255)
         return pixel
 class Wormhole:
-    def __init__(self,throatRad,pos,traceBoundRad,lookupdensity):
+    def __init__(self,throatRad,pos,traceBoundRad,lookupdensity,rdensity,bonguniverse):
+        self.bonguniverse=bonguniverse
+        self.error=0
+        self.rdensity=rdensity
         self.lookupdensity=lookupdensity
         self.throat=throatRad
         self.pos=pos
         self.traceRad=traceBoundRad
-        jsonfile='C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/lookups/lookup_'+str(self.throat)+'_'+str(self.traceRad)+'_'+str(self.lookupdensity)+'.json'
+        jsonfile=lookuplocation+'/lookup_'+str(self.throat)+'_'+str(self.traceRad)+'_'+str(self.lookupdensity)+'.json'
         my_file = Path(jsonfile)
         if my_file.is_file():
+            print('i think this file exists :)')
             with open(jsonfile,'r') as jf:
                 self.lookup=json.load(jf)
         else:
@@ -145,16 +171,22 @@ class Wormhole:
             'z':self.pos['z']+new_dir['z']*new_mag
         }
         return {'pos':new_pos,'vel':new_vel,'univ':univ}
-    def traceRayFromLookup(self,pos1,velocity,univ):
+    def traceRayFromLookup(self,pos1,velocity,univ,depth):
         pos1=pndiff(pos1,self.pos)
         vel={'hat':unit_vector(velocity),'mag':mag(velocity),'full':velocity}
         pos={'hat':unit_vector(pos1),'mag':mag(pos1),'full':pos1}
-        if abs(pos['mag']-self.traceRad)>0.05:
-            print('E: cannot lookup non-surface paths')
-            return 'ERROR'
-        theta=math.acos(-dot_product(vel['hat'],pos['hat']))
-        i=round((2*theta*self.lookupdensity)/math.pi)
-        data=self.lookup[i][1]
+        # if abs(pos['mag']-self.traceRad)>0.05:
+        #     print('E: cannot lookup non-surface paths')
+        #     return 'ERROR'
+        theta=math.acos(dot_product(vel['hat'],pos['hat']))
+        i=round((theta*self.lookupdensity)/math.pi)
+        r=round(((pos['mag']-self.throat-self.error)*self.rdensity)/(self.traceRad-self.throat-2*self.error))
+        if i==self.lookupdensity:
+            i-=1
+        if r==self.rdensity:
+            r-=1
+        # print(i)
+        data=self.lookup[r][i]
         if data['univ']==0:
             return {'univ':0}
         phi=data['phi']
@@ -193,49 +225,65 @@ class Wormhole:
             'y':self.pos['y']+new_dir['y']*new_mag,
             'z':self.pos['z']+new_dir['z']*new_mag
         }
+        if self.bonguniverse:
+            if univ*data['univ']==-1:
+                if depth<900:
+                    dot=dot_product(pndiff(new_pos,self.pos),unit_vector(new_vel))
+                    returningpos={
+                        'x':new_pos['x']-dot*new_vel['x'],
+                        'y':new_pos['y']-dot*new_vel['y'],
+                        'z':new_pos['z']-dot*new_vel['z']
+                    }
+                    return self.traceRayFromLookup(returningpos,new_vel,univ*data['univ'],depth+1)
+                else:
+                    return {'univ':0}
         return {'pos':new_pos,'vel':new_vel,'univ':univ*data['univ']}
     def generateLookup(self):
-        jsonoutfile='C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/lookups/lookup_'+str(self.throat)+'_'+str(self.traceRad)+'_'+str(self.lookupdensity)+'.json'
+        jsonoutfile=lookuplocation+'/lookup_'+str(self.throat)+'_'+str(self.traceRad)+'_'+str(self.lookupdensity)+'.json'
         jof=open(jsonoutfile,'w')
         data=[]
-        for t in range(self.lookupdensity):
-            print(t)
-            theta=(t*math.pi)/(self.lookupdensity*2)
-            l_0=math.sqrt((self.traceRad-0.001)**2-self.throat**2)
-            phi_dot=math.sqrt((1-math.cos(theta)**2)/((l_0**2+self.throat**2)))
-            v_0=-math.sqrt(1-(l_0**2+self.throat**2)*(phi_dot**2))
-            b=math.sqrt((l_0**2+self.throat**2)*(1-v_0**2))
-            if abs(b-1)<=0.0001:
-                data.append([t,{'univ':0}])
-            else:
-                phi_0=0
-                loop=True
-                l=l_0
-                v=v_0
-                phi=phi_0
-                count=0
-                while loop==True:
-                    count+=1
-                    v_dot=((b**2)*l)/((l**2+self.throat**2)**2)
-                    phi_dot=b/(l**2+self.throat**2)
-                    v=v+ds*v_dot
-                    l=l+ds*v
-                    phi=phi+ds*phi_dot
-                    if math.sqrt(l**2+self.throat**2)>self.traceRad:
-                        loop=False
-                data.append([t,{'phi':phi,'univ':abs(l)/l,'v':v,'l':l}])
+        for r in range(self.rdensity):
+            print(r)
+            data.append([])
+            radius=(self.traceRad-self.throat-2*self.error)*(r/self.rdensity)+self.throat+self.error
+            for t in range(self.lookupdensity):
+                theta=(t*math.pi)/(self.lookupdensity)
+                l_0=math.sqrt((radius)**2-self.throat**2)
+                # if r>=3:
+                #     print([1-(l_0**2+self.throat**2)*(phi_dot**2),l_0,phi_dot])
+                v_0=math.cos(theta)
+                b=math.sqrt((l_0**2+self.throat**2)*(1-v_0**2))
+                if abs(b-1)<=0.0001:
+                    data.append([t,{'univ':0}])
+                else:
+                    phi_0=0
+                    loop=True
+                    l=l_0
+                    v=v_0
+                    phi=phi_0
+                    count=0
+                    while loop==True:
+                        count+=1
+                        v_dot=((b**2)*l)/((l**2+self.throat**2)**2)
+                        phi_dot=b/(l**2+self.throat**2)
+                        v=v+ds*v_dot
+                        l=l+ds*v
+                        phi=phi+ds*phi_dot
+                        if math.sqrt(l**2+self.throat**2)>self.traceRad:
+                            loop=False
+                    data[r].append({'phi':phi,'univ':abs(l)/l,'v':v,'l':l})
         jof.write(json.dumps(data))
         return data
     
 
 
-nimpath='C:/Users/sam05/OneDrive/Desktop/CODE/github-repositorys/Wormholes/render/Wormhole'+str(round(time.time()))+'.png'
-wormholes=[Wormhole(1,{'x':0,'y':0,'z':0},10,LD)]
+nimpath=renderdestination+'/Wormhole'+str(round(time.time()))+'.png'
+wormholes=[Wormhole(1,{'x':0,'y':0,'z':0},10,LD['angle'],LD['rad'],True)]
 pos={'x':5,'y':1,'z':0}
 vel=unit_vector({'x':-7,'y':1,'z':0})
 IMSIZE=2000
 nim=[]
-worker_count=16
+worker_count=2
 args=[]
 if __name__ == '__main__':
     # arr=multiprocessing.Array('i',range(workerpool))
